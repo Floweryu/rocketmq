@@ -852,48 +852,67 @@ public class BrokerController {
 
     public void start() throws Exception {
         if (this.messageStore != null) {
+            // 这里的messageStore是在创建controller时初始化的，controller.initialize(); 是DefaultMessageStore类
+            // 启动消息存储服务，包括启动Broker的高可用机制；启动以下任务：
+            // 1. 启动把内存当中的消息刷到磁盘中的任务
+            // 2. 把 commitLog 中的消息分发到 consumerQueue 文件中任务
+            // 3. cleanFilesPeriodically(): 清除过期的 commitLog/ consumerQueue 日志文件, 10s
+            // 4. checkSelf(): 检查 commitLog/ consumerQueue 的 映射文件，10min
+            // 5. 如果 commitLog 锁时间超过了阈值，持久化它的锁信息, 1s
+            // 6. isSpaceFull(): 检测磁盘空间是否足够, 10s
+            // 需要掌握的java的知识点：scheduleAtFixedRate, RandomAccessFile
             this.messageStore.start();
         }
 
         if (this.remotingServer != null) {
+            // 使用Netty暴露Socket服务处理外部请求的调用
             this.remotingServer.start();
         }
 
         if (this.fastRemotingServer != null) {
+            // 使用Netty暴露Socket服务处理外部请求的调用
             this.fastRemotingServer.start();
         }
 
         if (this.fileWatchService != null) {
+            // 启动文件监听服务
             this.fileWatchService.start();
         }
 
         if (this.brokerOuterAPI != null) {
+            // 启动 brokerOuterAPI 也就是 RemotingClient，使得 Broker 可以调用其它方
             this.brokerOuterAPI.start();
         }
 
         if (this.pullRequestHoldService != null) {
+            // 启动 pullRequestHoldService 服务用于处理 Consumer 拉取消息
             this.pullRequestHoldService.start();
         }
 
         if (this.clientHousekeepingService != null) {
+            // 启动 clientHousekeepingService 服务用于处理 Producer、Consumer、FilterServer 的存活
             this.clientHousekeepingService.start();
         }
 
         if (this.filterServerManager != null) {
+            // 启动 filterServerManager 服务用于定时更新 FilterServer
             this.filterServerManager.start();
         }
 
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
             startProcessorByHa(messageStoreConfig.getBrokerRole());
             handleSlaveSynchronize(messageStoreConfig.getBrokerRole());
+            // 注册 Broker 信息到 NameServer
             this.registerBrokerAll(true, false, true);
         }
 
+        
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
             public void run() {
                 try {
+                    // 每10s向NameSrv发送心跳包，NameSrv会定时扫描broker列表，去掉长时间没发送心跳包的broker
                     BrokerController.this.registerBrokerAll(true, false, brokerConfig.isForceRegister());
                 } catch (Throwable e) {
                     log.error("registerBrokerAll Exception", e);
@@ -902,10 +921,12 @@ public class BrokerController {
         }, 1000 * 10, Math.max(10000, Math.min(brokerConfig.getRegisterNameServerPeriod(), 60000)), TimeUnit.MILLISECONDS);
 
         if (this.brokerStatsManager != null) {
+            // 启动 Broker 中的指标统计
             this.brokerStatsManager.start();
         }
 
         if (this.brokerFastFailure != null) {
+            // 启动 Broker 请求列表的过期请求清除任务
             this.brokerFastFailure.start();
         }
 
@@ -956,6 +977,7 @@ public class BrokerController {
 
     private void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
+        // 注册broker的信息到NameSrv上
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
